@@ -1,0 +1,61 @@
+- name: TEMPLATES - Create directories
+  file:
+    path: "/home/stack/{{ item }}"
+    owner: stack
+    group: stack
+    state: directory
+  loop:
+    - templates
+    - templates/nic-configs
+
+- name: TEMPLATES - Prepare templates
+  template:
+    src: "{{ item }}.j2"
+    dest: "/home/stack/templates/{{ item }}"
+    owner: stack
+    group: stack
+  loop:
+    - instackenv.yaml
+    - node-info.yaml
+    - custom-overcloud.yaml
+    - network_data.yaml
+    - custom-network-configuration.yaml
+    - custom-ceph.yaml
+    - initial-ceph.conf
+    - vip_data.yaml
+    - overcloud_resources.yaml
+
+- name: TEMPLATES - Prepare the nic-configs templates
+  template:
+    src: "nic-configs/nic-config.yaml.j2"
+    dest: "/home/stack/templates/nic-configs/{{ item.profile }}.yaml"
+    owner: stack
+    group: stack
+  when:
+    - RHOSP_version < 17.0
+    - roles_count[DefaultLeaf0.name][item.name] > 0
+  loop: "{{ overcloud_roles }}"
+
+- name: TEMPLATES - RHOSP >= 17.0 nic-config files
+  template:
+    src: "templates/nic-configs/nic-config.j2"
+    dest: "/home/stack/templates/nic-configs/{{ item.profile }}.j2"
+    owner: stack
+    group: stack
+  when:
+    - RHOSP_version >= 17.0
+    - roles_count[DefaultLeaf0.name][item.name] > 0
+  loop: "{{ overcloud_roles }}"
+
+- name: SCRIPTS - Prepare the scripts
+  template:
+    src: "{{ item }}.j2"
+    dest: "/home/stack/{{ item }}"
+    mode: "755"
+    owner: stack
+    group: stack
+  loop:
+    - pre_deployment.sh
+    - deploy.sh
+    - post_deployment.sh
+    - undeploy.sh

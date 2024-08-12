@@ -1,0 +1,149 @@
+#/bin/bash
+
+source /home/stack/stackrc
+
+{% if leaf.name == DefaultLeaf0.name %}
+{% set templates_dir='/home/stack/templates' %}
+
+# Auto source and completion
+if [ ! -f /usr/share/bash-completion/completions/openstack ]; then
+  openstack complete 2>/dev/null | grep -v -E 'DEBUG osc_lib|INFO osc_lib' | sudo tee /usr/share/bash-completion/completions/openstack
+fi
+
+if ! grep -Fxq "source /home/stack/stackrc" /home/stack/.bashrc; then
+  echo "source /home/stack/stackrc" >> /home/stack/.bashrc
+fi
+
+if ! grep -Fxq "source /usr/share/bash-completion/completions/openstack" /home/stack/.bashrc; then
+  echo "source /usr/share/bash-completion/completions/openstack" >> /home/stack/.bashrc
+fi
+
+# Prepare the overcloud
+openstack overcloud image upload --image-path /home/stack/images/
+{% if RHOSP_version >= 17.0 %}
+openstack overcloud image upload --image-path /home/stack/images/ --os-image-name overcloud-full.qcow2
+ls -al /var/lib/ironic/images/
+{% else %}
+openstack image list --fit-width
+{% endif %}
+
+{% else %}
+{% set templates_dir="/home/stack/templates/" ~ leaf.name %}
+{% endif %}
+
+{% if RHOSP_version >= 17.0 %}
+{% if leaf.name == DefaultLeaf0.name %}
+# Provision networks and vips
+openstack overcloud network provision -y --output {{ templates_dir }}/overcloud-networks-deployed.yaml {{ templates_dir }}/network_data.yaml
+openstack overcloud network vip provision -y --stack {{ leaf.name }} --output {{ templates_dir }}/overcloud-vip-deployed.yaml {{ templates_dir }}/vip_data.yaml
+{% else %}
+# Copy the central site network and vip files
+cp /home/stack/templates/overcloud-networks-deployed.yaml {{ templates_dir }}/overcloud-networks-deployed.yaml
+cp /home/stack/templates/overcloud-vip-deployed.yaml {{ templates_dir }}/overcloud-vip-deployed.yaml
+{% endif %}
+{% endif %}
+
+# Prepare baremetal nodes
+openstack overcloud node import {{ templates_dir }}/instackenv.yaml
+openstack baremetal node list
+openstack baremetal node list -f value -c Name -c 'Power State' | grep 'power on' | grep 'manageable' | awk {'system("openstack baremetal node power off "$1)'}
+openstack baremetal node list
+
+# Introspect baremetal nodes
+openstack overcloud node introspect --all-manageable --provide
+openstack baremetal node list
+
+
+# Prepare images
+{% if RHOSP_version == 13.0 %}
+{% if leaf.name == DefaultLeaf0.name %}
+{% if rh_serviceaccount and rh_token %}
+sudo docker login registry.redhat.io --username '{{ rh_serviceaccount }}' --password '{{ rh_token }}'
+{% else %}
+sudo docker login registry.redhat.io --username '{{ rh_username }}' --password '{{ rh_password }}'
+{% endif %}
+sudo openstack overcloud container image prepare \
+-e /usr/share/openstack-tripleo-heat-templates/environments/services-docker/neutron-ovs-dpdk.yaml \
+-e /usr/share/openstack-tripleo-heat-templates/environments/services-docker/neutron-sriov.yaml \
+-e /usr/share/openstack-tripleo-heat-templates/environments/services-docker/neutron-ovn-dvr-ha.yaml \
+-e /usr/share/openstack-tripleo-heat-templates/environments/services-docker/octavia.yaml \
+-e /usr/share/openstack-tripleo-heat-templates/environments/ceph-ansible/ceph-ansible.yaml \
+--set ceph_namespace=registry.redhat.io/rhceph \
+--set ceph_image=rhceph-3-rhel7 \
+--namespace=registry.redhat.io/rhosp13 \
+--prefix=openstack- \
+--push-destination={{ DefaultLeaf0.subnet.cidr | ipaddr('1') | ipaddr('address') }}:8787 \
+--tag-from-label {version}-{release} \
+--output-env-file {{ templates_dir }}/overcloud-images.yaml \
+--output-images-file /home/stack/local_registry_images.yaml
+sudo openstack overcloud container image upload \
+--config-file /home/stack/local_registry_images.yaml \
+--verbose
+{% endif %}
+{% elif RHOSP_version >= 17.0 %}
+sudo openstack tripleo container image prepare \
+-e /home/stack/containers-prepare-parameter.yaml \
+--output-env-file {{ templates_dir }}/overcloud-images.yaml
+{% else %}
+sudo openstack tripleo container image prepare \
+{% if leaf.name != DefaultLeaf0.name %}
+-e /home/stack/templates/overcloud-export.yaml \
+{% endif %}
+-e /home/stack/containers-prepare-parameter.yaml \
+--output-env-file {{ templates_dir }}/overcloud-images.yaml
+{% endif %}
+
+{% if RHOSP_version >= 17.0 %}
+# Provision nodes
+openstack overcloud node provision -y --stack {{ leaf.name }} --network-config --output {{ templates_dir }}/overcloud-baremetal-deployed.yaml {{ templates_dir }}/node-info.yaml
+metalsmith list
+{% endif %}
+
+{% if RHOSP_version != 13.0 %}
+# Generate roles
+openstack overcloud roles generate -o {{ templates_dir }}/roles_data.yaml {% for ocrole in overcloud_roles if roles_count[leaf.name][ocrole.name] > 0 %}{{ ocrole.name if (ocrole.copy_from is not defined) else (ocrole.copy_from ~ ':' ~ ocrole.name) }} {% endfor %}
+
+
+# Remove HostnameFormatDefault parameter for roles to default to lowercase role name
+sed -i -E '/HostnameFormatDefault: .+$/d' {{ templates_dir }}/roles_data.yaml
+
+# Add External network where it's needed
+{% for role, nets in roles_networks.items() if ('External' in nets) and (roles_count[leaf.name][role] > 0) %}
+sed -i -Ez 's/- name: {{ role }}\n(([^-][^\n]*\n)+)  networks:\n    ([^E].+):/- name: {{ role }}\n\1  networks:\n    External:\n      subnet: external_subnet{{ '_' ~ leaf.name if leaf.name != DefaultLeaf0.name else '' }}\n    \3:/' {{ templates_dir }}/roles_data.yaml
+{% endfor %}
+{% if leaf.name != DefaultLeaf0.name %}
+# Change the subnets for the leaf ones
+sed -i -E 's/subnet: (.+_subnet)$/subnet: \1{{ '_' ~ leaf.name }}/g' {{ templates_dir }}/roles_data.yaml
+{% endif %}
+{% else %}
+{% if leaf.name == DefaultLeaf0.name %}
+# Create roles folder
+mkdir /home/stack/roles
+
+# Copy roles for the default leaf
+{% for ocrole in overcloud_roles if roles_count[DefaultLeaf0.name][ocrole.name] > 0 %}
+cp /usr/share/openstack-tripleo-heat-templates/roles/{{ ocrole.name }}.yaml /home/stack/roles/{{ ocrole.name }}.yaml
+sed -i -Ez 's/- name: {{ ocrole.name }}\n(([^-][^\n]*\n)+)  networks:\n    - ([^E].+)/- name: {{ ocrole.name }}\n\1  networks:\n    - External\n    - \3/' /home/stack/roles/{{ ocrole.name }}.yaml
+sed -i -E '/HostnameFormatDefault: .+$/d' /home/stack/roles/{{ ocrole.name }}.yaml
+{% endfor %}
+
+{% for dcnleaf in DCNLeafs %}
+# Copy roles for {{ dcnleaf.name }} and change the role and network names
+{% for ocrole in overcloud_roles if roles_count[dcnleaf.name][ocrole.name] > 0 %}
+cp /usr/share/openstack-tripleo-heat-templates/roles/{{ ocrole.name if (ocrole.copy_from is not defined) else ocrole.copy_from }}.yaml /home/stack/roles/{{ ocrole.name }}{{ dcnleaf.name }}.yaml
+{% for role, nets in roles_networks.items() if ('External' in nets) and (roles_count[dcnleaf.name][role] > 0) %}
+sed -i -Ez 's/- name: {{ role }}\n(([^-][^\n]*\n)+)  networks:\n    - ([^E].+)/- name: {{ role }}\n\1  networks:\n    - External\n    - \3/' /home/stack/roles/{{ ocrole.name }}{{ dcnleaf.name }}.yaml
+{% endfor %}
+sed -i -E 's/- name: {{ ocrole.name }}$/- name: {{ ocrole.name }}{{ dcnleaf.name }}/g' /home/stack/roles/{{ ocrole.name }}{{ dcnleaf.name }}.yaml
+sed -i -E 's/    - (Storage|StorageMgmt|InternalApi|Tenant|External)$/    - \1{{ dcnleaf.name }}/g' /home/stack/roles/{{ ocrole.name }}{{ dcnleaf.name }}.yaml
+sed -i -E '/HostnameFormatDefault: .+$/d' /home/stack/roles/{{ ocrole.name }}{{ dcnleaf.name }}.yaml
+{% endfor %}
+{% endfor %}
+
+# Generate roles for all the leafs
+openstack overcloud roles generate -o {{ templates_dir }}/roles_data.yaml --roles-path /home/stack/roles \
+{% for ocrole in overcloud_roles if roles_count[DefaultLeaf0.name][ocrole.name] > 0 %}{{ ocrole.name if (ocrole.copy_from is not defined) else (ocrole.copy_from ~ ':' ~ ocrole.name) }} {% endfor %} \
+{% for dcnleaf in DCNLeafs %}{% for ocrole in overcloud_roles if roles_count[dcnleaf.name][ocrole.name] > 0 %}{{ ocrole.name ~ dcnleaf.name }} {% endfor %}{% endfor %} \
+;
+{% endif %}
+{% endif %}

@@ -1,0 +1,7 @@
+- name: SUBSCRIPTION - Check subscription-manager status
+  shell: "subscription-manager status"
+  register: status
+  changed_when: false
+  failed_when: false
+
+

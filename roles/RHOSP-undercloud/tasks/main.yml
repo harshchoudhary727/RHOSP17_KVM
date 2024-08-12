@@ -1,0 +1,137 @@
+---
+# tasks file for RHOSP-undercloud
+
+- name: Verify the RHOSP version selected is supported
+  fail:
+    msg: "The selected RHOSP version ({{ RHOSP_version }}) is not supported by this role."
+  when: RHOSP_version_supported[RHOSP_version] is not defined
+
+- name: Wait until cloud-init finishes to grant the sudo access with no password
+  raw: test -f /var/lib/cloud/instance/boot-finished
+  retries: 30
+  register: cmd_res
+  changed_when: false
+  until: cmd_res is success
+
+- name: Configure swap file on the undercloud
+  include_role:
+    name: geerlingguy.swap
+
+- name: HOSTNAME - Change the hostname
+  hostname:
+    name: undercloud.localdomain
+
+- name: Red Hat Subscription management
+  import_tasks: tasks/subscription.yml
+
+- name: REPOSITORIES - Enable the needed repositories only
+  rhsm_repository:
+    name: "{{ RHOSP_version_supported[RHOSP_version].undercloud_repos }}"
+    purge: yes
+
+- name: MODULES - Enable and configure modules
+  copy:
+    dest: "/etc/dnf/modules.d/{{ item.name }}.module"
+    content: |
+      [{{ item.name }}]
+      name={{ item.name }}
+      stream={{ item.stream }}
+      profiles={{ item.profiles }}
+      state=enabled
+  loop: "{{ RHOSP_version_supported[RHOSP_version].modules }}"
+
+- name: PACKAGES - Install useful tools
+  yum:
+    name:
+      - vim
+      - wget
+      - bash-completion
+    state: latest
+
+- name: PACKAGES - Update all packages
+  yum:
+    name: '*'
+    state: latest
+  notify: HANDLER - Reboot the machine
+
+- name: CONFIGFILES - Create images directory
+  file:
+    path: "/home/stack/images"
+    owner: stack
+    group: stack
+    state: directory
+  loop:
+    - images
+
+- name: PACKAGES - Install needed packages
+  yum:
+    name: "{{ RHOSP_version_supported[RHOSP_version].packages }}"
+    state: latest
+
+- name: IMAGES - Unpack director images
+  unarchive:
+    src: "{{ item }}"
+    dest: "/home/stack/images/"
+    owner: stack
+    group: stack
+    remote_src: yes
+  loop: "{{ RHOSP_version_supported[RHOSP_version].images_directories }}"
+
+- name: IMAGES - Download images for testing
+  ignore_errors: true
+  get_url:
+    url: "{{ item.url }}"
+    dest: "images/{{ item.name }}"
+    owner: stack
+    group: stack
+    timeout: 30
+  loop:
+    - url: "{{ CustomRhelImage }}"
+      name: "{{ RHOSP_version_supported[RHOSP_version].rhel_image.name }}"
+    - url: "{{ CirrOSDownloadLink }}"
+      name: "cirros.qcow2"
+  retries: 3
+  delay: 10
+  register: result
+  until: result is not failed
+
+- name: TEMPLATES
+  debug:
+    msg: "Use --start-at-task TEMPLATES to start from here and re-render the templates."
+
+- name: CHECKS - Verify vms and physical profiles
+  import_tasks: tasks/profiles.yml
+
+- name: CONFIGFILES - Set container images prepare file
+  template:
+    src: "containers-prepare-parameter.yaml.j2"
+    dest: "/home/stack/containers-prepare-parameter.yaml"
+    owner: stack
+    group: stack
+
+- name: CONFIGFILES - Set custom undercloud parameters
+  copy:
+    src: "templates/custom-undercloud-params.yaml"
+    dest: "/home/stack/custom-undercloud-params.yaml"
+    owner: stack
+    group: stack
+
+- name: CONFIGFILES - Set undercloud configuration file
+  template:
+    src: "undercloud.conf.j2"
+    dest: "/home/stack/undercloud.conf"
+    owner: stack
+    group: stack
+
+- name: STACK - Import tasks for the main stack
+  include_tasks: tasks/overcloud.yml
+  loop:
+    - "{{ DefaultLeaf0 }}"
+  loop_control:
+    loop_var: leaf
+
+- name: DCN - Import tasks for each DCN Leaf
+  include_tasks: tasks/leafs.yml
+  loop: "{{ DCNLeafs }}"
+  loop_control:
+    loop_var: leaf

@@ -1,0 +1,265 @@
+---
+
+# RHOSP version
+RHOSP_version: 17.1
+RHOSP_release: latest
+
+# Custom RHEL image: set URL to use a custom image. If it's a local file, use "file://<full_path>"
+CustomRhelImage: "{{ RHOSP_version_supported[RHOSP_version].rhel_image.url }}"
+
+# Cleaning and creating parameters
+cleanup: False
+
+# overcloud parameters
+external_if: enp195s0
+overcloud_ip: 10.0.0.254
+forwarded_ports:
+  - 80
+  - 6080
+  - 5000
+vncproxy: ''
+
+# dns and ntp servers
+dns_servers:
+  - '8.8.8.8'
+  - '8.8.4.4'
+ntp_servers: 
+  - '0.pool.ntp.org'
+  - '1.pool.ntp.org'
+  - '2.pool.ntp.org'
+  - '3.pool.ntp.org'
+
+# Default leaf configuration
+DefaultLeaf0:
+  name: overcloud
+  hypervisor: localhost
+  subnet:
+    name: ctlplane-subnet
+    cidr: 192.168.24.0/24
+    dhcp_start: 192.168.24.5
+    dhcp_end: 192.168.24.55
+    inspection_iprange: 192.168.24.100,192.168.24.120
+    gateway: 192.168.24.254
+    masquerade: false
+  networks:
+    Tenant:
+      prefix: '172.16.0'
+      vlan: 10
+      network: RHOSPVirtLab_ctlplane
+    Storage:
+      prefix: '172.16.1'
+      vlan: 20
+      network: RHOSPVirtLab_ctlplane
+    InternalApi:
+      prefix: '172.16.2'
+      vlan: 30
+      network: RHOSPVirtLab_ctlplane
+    StorageMgmt:
+      prefix: '172.16.3'
+      vlan: 40
+      network: RHOSPVirtLab_ctlplane
+    External:
+      prefix: '10.0.0'
+      network: RHOSPVirtLab_external
+    Management:
+      prefix: '10.0.1'
+      vlan: 60
+      network: RHOSPVirtLab_ctlplane
+
+# interfaces to use in each nic-config
+interfaces:
+  Controller:
+    ControlPlane: nic1
+    External: nic2
+  Compute:
+    ControlPlane: nic1
+    External: nic2
+  ComputeOvsDpdk:
+    ControlPlane: nic1
+    External: nic2
+    DpdkBonds: []
+  ComputeOvsDpdkSriov:
+    ControlPlane: nic1
+    External: nic2v0
+    Sriov:
+      - device: nic2
+        numvfs: 8
+    DpdkBonds: []
+  ComputeSriov:
+    ControlPlane: nic1
+    External: nic2v0
+    Sriov:
+      - device: nic2
+        numvfs: 8
+  ComputeOvsHwOffload:
+    ControlPlane: nic1
+    External: nic2v0
+    Sriov:
+      - device: nic2
+        numvfs: 8
+  CephStorage:
+    ControlPlane: nic1
+    External: nic2
+  ComputeHCI:
+    ControlPlane: nic1
+    External: nic2
+  ComputeInstanceHA:
+    ControlPlane: nic1
+    External: nic2
+  DistributedCompute:
+    ControlPlane: nic1
+    External: nic2
+  DistributedComputeScaleOut:
+    ControlPlane: nic1
+    External: nic2
+  DistributedComputeHCI:
+    ControlPlane: nic1
+    External: nic2
+  DistributedComputeHCIScaleOut:
+    ControlPlane: nic1
+    External: nic2
+  CephAll:
+    ControlPlane: nic1
+    External: nic2
+
+# All computes default properties
+BridgeMappings: 'datacentre:br-ex'
+NetworkVlanRanges: 'datacentre:1:1000'
+
+# ComputeSriov default properties
+ComputeSriovProperties:
+  isolcpus: '8-19'
+  hugepagesz: '1GB'
+  hugepages: 32
+  kernelargs: 'iommu=pt intel_iommu=on'
+  physicaldevmappings: 'datacentre:br-ex,sriov1:ens1f1'
+  dedicatedcpus: '8-19'
+  sharedcpus: '4-7'
+  hostmemory: 8192
+  pcipassthrough:
+    - devname: ens1f1
+      physical_network: 'sriov1'
+      trusted: true
+
+# ComputeOvsHwOffload default properties
+ComputeOvsHwOffloadProperties:
+  isolcpus: '8-19'
+  hugepagesz: '1GB'
+  hugepages: 32
+  kernelargs: 'iommu=pt intel_iommu=on'
+  physicaldevmappings: 'datacentre:br-ex,offload1:ens1f1'
+  dedicatedcpus: '8-19'
+  sharedcpus: '4-7'
+  hostmemory: 8192
+  pcipassthrough:
+    - devname: ens1f1
+      physical_network: 'offload1'
+      trusted: true
+
+# ComputeOvsDpdk default properties
+ComputeOvsDpdkProperties:
+  isolcpus: '6-23,30-47'
+  hugepagesz: '1GB'
+  hugepages: 32
+  kernelargs: 'iommu=pt intel_iommu=on'
+  dedicatedcpus: '8-23,32-47'
+  sharedcpus: '6-7,30-31'
+  hostmemory: 8192
+  socketmemory: '4096,4096'
+  memorychannels: '4'
+  ovsdpdkcorelist: '2,26,3,27'
+  ovspmdcorelist: '4,28,5,29'
+
+# ComputeOvsDpdkSriov default properties
+ComputeOvsDpdkSriovProperties:
+  isolcpus: '6-23,30-47'
+  hugepagesz: '1GB'
+  hugepages: 32
+  kernelargs: 'iommu=pt intel_iommu=on'
+  dedicatedcpus: '8-23,32-47'
+  sharedcpus: '6-7,30-31'
+  hostmemory: 8192
+  socketmemory: '4096,4096'
+  memorychannels: '4'
+  ovsdpdkcorelist: '2,26,3,27'
+  ovspmdcorelist: '4,28,5,29'
+  physicaldevmappings: 'datacentre:br-ex,sriov1:ens1f1'
+  pcipassthrough:
+    - devname: ens1f1
+      physical_network: 'sriov1'
+      trusted: true
+
+# CephStorage default properties
+CephStorageProperties:
+  devices: ['/dev/sdb']
+
+# Octavia parameters
+DeployOctavia: False
+
+# Designate parameters
+DeployDesignate: False
+
+# FRR parameters
+DeployFrr: False
+
+# Subscription manager parameters
+RegisterNodes: False
+
+# Low Memory Usage parameters
+LowMemUsage: True
+
+# Enable fencing for controllers
+ControllersFencing: True
+
+# Neutron driver
+NeutronDriver: ovn
+
+# Disable telemetry
+DisableTelemetry: True
+
+# Telemetry parameters (Set DisableTelemetry to False to use)
+Telemetry: False
+  # MetricsConnectorHost: default-interconnect-5671-service-telemetry.apps.ocp-sno-for-stf.redhat.local
+  # MetricsConnectorIPAddress: 10.8.223.249
+  # Cloud: cloud1
+  # Certificate: |
+  #   -----BEGIN CERTIFICATE-----
+  #   <snip>
+  #   -----END CERTIFICATE-----
+
+# DCN leafs
+DCNLeafs: []
+  # - name: leaf1
+  #   hypervisor: <hypervisor_name>
+  #   subnet:
+  #     name: leaf1-subnet
+  #     cidr: 192.168.25.0/24
+  #     dhcp_start: 192.168.25.5
+  #     dhcp_end: 192.168.25.55
+  #     inspection_iprange: 192.168.25.100,192.168.25.120
+  #     gateway: 192.168.25.1
+  #     masquerade: true
+  #   networks:
+  #     Tenant:
+  #       prefix: '172.17.0'
+  #       vlan: 10
+  #       network: RHOSPVirtLab_ctlplane
+  #     Storage:
+  #       prefix: '172.17.1'
+  #       vlan: 20
+  #       network: RHOSPVirtLab_ctlplane
+  #     InternalApi:
+  #       prefix: '172.17.2'
+  #       vlan: 30
+  #       network: RHOSPVirtLab_ctlplane
+  #     StorageMgmt:
+  #       prefix: '172.17.3'
+  #       vlan: 40
+  #       network: RHOSPVirtLab_ctlplane
+  #     External:
+  #       prefix: '10.1.0'
+  #       network: RHOSPVirtLab_external
+  #     Management:
+  #       prefix: '10.1.1'
+  #       vlan: 60
+  #       network: RHOSPVirtLab_ctlplane

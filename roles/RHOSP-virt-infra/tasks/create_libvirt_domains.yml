@@ -1,0 +1,78 @@
+- name: DOMAINS - List libvirt VMs
+  community.libvirt.virt:
+    command: list_vms
+  register: all_vms
+  become: yes
+
+- name: DOMAINS - Define the domain from the template
+  community.libvirt.virt:
+    command: define
+    xml: "{{ lookup('template', 'domain.xml.j2') }}"
+    autostart: yes
+  loop: "{{ vms }}"
+  become: yes
+  notify: HANDLER - Clean known_hosts file
+  when:
+    - inventory_hostname in item.hypervisor
+    - item.name not in all_vms.list_vms
+
+- name: DOMAINS - Stop undercloud if undercloud-init.iso changed in order to reboot
+  community.libvirt.virt:
+    name: undercloud
+    state: shutdown
+  become: yes
+  when:
+    - inventory_hostname == 'localhost'
+    - overcloud_init_pool.changed
+
+- name: DOMAINS - Wait for the undercloud to stop
+  community.libvirt.virt:
+    command: list_vms
+    state: running
+  become: yes
+  register: running_vms
+  retries: 3
+  delay: 15
+  until: '"undercloud" not in running_vms.list_vms'
+  when:
+    - inventory_hostname == 'localhost'
+    - overcloud_init_pool.changed
+
+- name: DOMAINS - Ensure undercloud domain is running
+  community.libvirt.virt:
+    name: undercloud
+    state: running
+  become: yes
+  when: inventory_hostname == 'localhost'
+
+- name: DOMAINS - Wait for the undercloud to start
+  community.libvirt.virt:
+    command: list_vms
+    state: running
+  become: yes
+  register: running_vms
+  retries: 3
+  delay: 15
+  until: '"undercloud" in running_vms.list_vms'
+  when: inventory_hostname == 'localhost'
+
+- name: DOMAINS - Add management IPs entries to /etc/hosts on the local machines
+  lineinfile:
+    path: "/etc/hosts"
+    regexp: "{{ item.nics.RHOSPVirtLab_management }}\t{{ item.name }}"
+    line: "{{ item.nics.RHOSPVirtLab_management }}\t{{ item.name }}"
+    state: present
+  loop: "{{ vms }}"
+  become: yes
+  when:
+    - inventory_hostname in item.hypervisor
+    - item.nics.RHOSPVirtLab_management is defined
+
+- name: DOMAINS - Add overcloud IP entry to /etc/hosts on the local machines
+  lineinfile:
+    path: "/etc/hosts"
+    regexp: "{{ overcloud_ip }}\tovercloud"
+    line: "{{ overcloud_ip }}\tovercloud"
+    state: present
+  become: yes
+

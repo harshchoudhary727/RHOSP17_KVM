@@ -1,0 +1,322 @@
+{% set ceph_count = (roles_count[leaf.name]["CephStorage"] + roles_count[leaf.name]["CephAll"]) %}
+{% set hci_count = (roles_count[leaf.name]["ComputeHCI"] + roles_count[leaf.name]["DistributedComputeHCI"] + roles_count[leaf.name]["DistributedComputeHCIScaleOut"]) %}
+{% set DefaultLeaf0_ceph_count = (roles_count[DefaultLeaf0.name]["CephStorage"] + roles_count[DefaultLeaf0.name]["CephAll"]) %}
+{% set DefaultLeaf0_hci_count = (roles_count[DefaultLeaf0.name]["ComputeHCI"] + roles_count[DefaultLeaf0.name]["DistributedComputeHCI"] + roles_count[DefaultLeaf0.name]["DistributedComputeHCIScaleOut"]) %}
+
+{% if (not DisableTelemetry) and (Telemetry is mapping) %}{# IF 1 #}
+# For Telemetry
+resource_registry:
+  OS::TripleO::Services::Collectd: /usr/share/openstack-tripleo-heat-templates/deployment/metrics/collectd-container-puppet.yaml
+{% endif %}{# IF 1 #}
+
+parameter_defaults:
+{% if leaf.name == DefaultLeaf0.name %}{# IF 2 #}
+{% if DCNLeafs | length > 0 %}{# IF 2.1 #}
+{% if (ceph_count + hci_count) > 0 %}{# IF 2.1.1 #}
+  GlanceEnabledImportMethods: web-download,copy-image
+  GlanceBackend: rbd
+  GlanceStoreDescription: '{{ leaf.name }} rbd glance store'
+  GlanceBackendID: {{ leaf.name }}
+  CephClusterName: {{ leaf.name }}
+  GlanceRbdPoolName: images
+  CinderStorageAvailabilityZone: {{ leaf.name }}
+# Uncomment the following after deploying the leafs
+#  GlanceMultistoreConfig:
+{% for dcn_leaf in DCNLeafs %}{# IF 2.1.1 FOR 1 #}
+{% if (roles_count[dcn_leaf.name]["CephStorage"] + roles_count[dcn_leaf.name]["CephAll"] + roles_count[dcn_leaf.name]["ComputeHCI"] + roles_count[dcn_leaf.name]["DistributedComputeHCI"] + roles_count[dcn_leaf.name]["DistributedComputeHCIScaleOut"]) > 0 %}{# IF 1.1.1 FOR 1 IF 1 #}
+#    {{ dcn_leaf.name }}:
+#      GlanceBackend: rbd
+#      GlanceStoreDescription: '{{ dcn_leaf.name }} rbd glance store'
+#      CephClusterName: {{ dcn_leaf.name }}
+#      CephClientUserName: openstack
+#      GlanceBackendID: {{ dcn_leaf.name }}
+#      GlanceRbdPoolName: images
+{% else %}{# IF 2.1.1 FOR 1 IF 1 #}
+#    {{ dcn_leaf.name }}:
+#      GlanceBackend: cinder
+#      GlanceStoreDescription: '{{ dcn_leaf.name }} Block Storage (cinder) store'
+#      GlanceBackendID: {{ dcn_leaf.name }}
+{% endif %}{# IF 2.1.1 FOR 1 IF 1 #}
+{% endfor %}{# IF 2.1.1 FOR 1 #}
+{% else %}{# IF 2.1.1 #}
+{% if RHOSP_version < 17.0 %}{# IF 2.1.1.1 #}
+  GlanceBackend: cinder
+  CinderStorageAvailabilityZone: {{ leaf.name }}
+{% else %}{# IF 2.1.1.1 #}
+  GlanceBackend: swift
+{% endif %}{# IF 2.1.1.1 #}
+{% endif %}{# IF 2.1.1 #}
+  NovaComputeAvailabilityZone: {{ leaf.name }}
+  NovaCrossAZAttach: false
+  ControllerExtraConfig:
+    nova::scheduler::filter::scheduler_host_subset_size: '999'
+    nova::availability_zone::default_schedule_zone: {{ leaf.name }}
+{% else %}{# IF 2.1 #}
+  ControllerExtraConfig:
+    nova::scheduler::filter::scheduler_host_subset_size: '999'
+{% endif %}{# IF 2.1 #}
+  PublicVirtualFixedIPs: [{'ip_address':'{{ overcloud_ip }}'}]
+{% else %}{# IF 2 #}
+{% if RHOSP_version < 17.0 %}{# IF 2.2 #}
+  CinderStorageAvailabilityZone: {{ leaf.name }}
+  GlanceBackendID: {{ leaf.name }}
+{% endif %}{# IF 2.2 #}
+{% if (ceph_count + hci_count) > 0 %}{# IF 2.3 #}
+  GlanceEnabledImportMethods: web-download,copy-image
+  GlanceBackend: rbd
+  GlanceStoreDescription: '{{ leaf.name }} rbd glance store'
+  GlanceRbdPoolName: images
+{% else %}{# IF 2.3 #}
+{% if RHOSP_version < 17.0 %}{# IF 2.3.1 #}
+  GlanceBackend: cinder
+{% endif %}{# IF 2.3.1 #}
+{% endif %}{# IF 2.3 #}
+{% if (DefaultLeaf0_ceph_count + DefaultLeaf0_hci_count) > 0 %}{# IF 2.4 #}
+  GlanceMultistoreConfig:
+    {{ DefaultLeaf0.name }}:
+      GlanceBackend: rbd
+      GlanceStoreDescription: '{{ DefaultLeaf0.name }} rbd glance store'
+      CephClusterName: {{ DefaultLeaf0.name }}
+      GlanceRbdPoolName: images
+      CephClientUserName: openstack
+{% endif %}{# IF 2.4 #}
+{% if RHOSP_version < 17.0 %}{# IF 2.5 #}
+  NovaAZAttach: false
+{% else %}{# IF 2.5 #}
+  NovaCrossAZAttach: false
+{% endif %}{# IF 2.5 #}
+  NovaComputeAvailabilityZone: {{ leaf.name }}
+{% if RHOSP_version < 17.0 %}{# IF 2.6 #}
+  ManageNetworks: false
+  RootStackName: {{ DefaultLeaf0.name }}
+{% endif %}{# IF 2.6 #}
+{% endif %}{# IF 2 #}
+{% if RHOSP_version < 17.0 %}{# IF 3 #}
+  AllNodesExtraConfig:
+    swap_size_megabytes: '8192'
+{% for ocrole in overcloud_roles %}{# IF 3 FOR 1 #}
+{% if roles_count[leaf.name][ocrole.name] > 0 %}{# IF 3 FOR 1 IF 1 #}
+  {{ ocrole.name }}SchedulerHints:
+    'capabilities:node': '{{ leaf.name }}-{{ ocrole.profile }}%index%'
+{% if 'Compute' in ocrole.name %}{# IF 3 FOR 1 IF 1.1 #}
+  {{ ocrole.name }}ExtraConfig:
+    nova::vncproxy::common::vncproxy_host: {{ vncproxy }}
+{% endif %}{# IF 3 FOR 1 IF 1.1 #}
+{% endif %}{# IF 3 FOR 1 IF 1 #}
+{% endfor %}{# IF 3 FOR 1 #}
+
+{% if RHOSP_version == 13.0 and leaf.name == DefaultLeaf0.name %}{# IF 3.1 #}
+{% for dcnleaf in DCNLeafs %}{# IF 3.1 FOR 1 #}
+{% for ocrole in overcloud_roles %}{# IF 3.1 FOR 1.1 #}
+{% if roles_count[dcnleaf.name][ocrole.name] > 0 %}{# IF 3.1 FOR 1.1 IF 1 #}
+  {{ ocrole.name }}{{ dcnleaf.name }}SchedulerHints:
+    'capabilities:node': '{{ dcnleaf.name }}-{{ ocrole.profile }}%index%'
+{% if 'Compute' in ocrole.name %}{# IF 3.1 FOR 1.1 IF 1.1 #}
+  {{ ocrole.name }}{{ dcnleaf.name }}ExtraConfig:
+    nova::compute::libvirt::vncserver_listen: "%{hiera('internal_api_{{ dcnleaf.name }}')}"
+    nova::compute::vncserver_proxyclient_address: "%{hiera('internal_api_{{ dcnleaf.name }}')}"
+    neutron::agents::ml2::ovs::local_ip: "%{hiera('tenant_{{ dcnleaf.name }}')}"
+    ovn::controller::ovn_encap_ip: "%{hiera('tenant_{{ dcnleaf.name }}')}"
+    cold_migration_ssh_inbound_addr: "%{hiera('internal_api_{{ dcnleaf.name }}')}"
+    live_migration_ssh_inbound_addr: "%{hiera('internal_api_{{ dcnleaf.name }}')}"
+    nova::migration::libvirt::live_migration_inbound_addr: "%{hiera('internal_api_{{ dcnleaf.name }}')}"
+    nova::my_ip: "%{hiera('internal_api_{{ dcnleaf.name }}')}"
+    tripleo::profile::base::database::mysql::client::mysql_client_bind_address: "%{hiera('internal_api_{{ dcnleaf.name }}')}"
+    nova::vncproxy::common::vncproxy_host: {{ vncproxy }}
+{% endif %}{# IF 3.1 FOR 1.1 IF 1.1 #}
+{% endif %}{# IF 3.1 FOR 1.1 IF 1 #}
+{% endfor %}{# IF 3.1 FOR 1.1 #}
+{% endfor %}{# IF 3.1 FOR 1 #}
+{% if (ceph_count + hci_count) > 0 %}{# IF 3.1.1 #}
+  CephAnsibleExtraConfig:
+    public_network: '{{ DefaultLeaf0.networks.Storage.prefix ~ '.0/24' }},{% for dcnleaf in DCNLeafs %}{{ leaf.networks.Storage.prefix ~ '.0/24' }}{% endfor %}'
+    cluster_network: '{{ DefaultLeaf0.networks.StorageMgmt.prefix ~ '.0/24' }},{% for dcnleaf in DCNLeafs %}{{ leaf.networks.StorageMgmt.prefix ~ '.0/24' }}{% endfor %}'
+{% endif %}{# IF 3.1.1 #}
+{% endif %}{# IF 3.1 #}
+{% else %}{# IF 3 #}
+{% for ocrole in overcloud_roles if ('Compute' in ocrole.name) and (roles_count[leaf.name][ocrole.name] > 0) %}{# IF 3 FOR 1 #}
+  {{ ocrole.name }}ExtraConfig:
+    nova::vncproxy::common::vncproxy_host: {{ vncproxy }}
+{% endfor %}{# IF 3 FOR 1#}
+{% endif %}{# IF 3 #}
+
+{% if RegisterNodes %}{# IF 4 #}
+  RhsmVars:
+{% if (rh_orgid is not defined) or (rh_activationkey is not defined) %}{# IF 4.1 #}
+    rhsm_username: "{{ rh_username }}"
+    rhsm_password: "{{ rh_password }}"
+{% else %}{# IF 4.1 #}
+    rhsm_org_id: "{{ rh_orgid }}"
+    rhsm_activation_key: "{{ rh_activationkey }}"
+{% endif %}{# IF 4.1 #}
+{% if (rh_pool is defined) %}{# IF 4.2 #}
+    rhsm_pool_ids: "{{ rh_pool }}"
+{% endif %}{# IF 4.2 #}
+    rhsm_repos:
+{% for repo in RHOSP_version_supported[RHOSP_version].nodes_repos %}{# IF 4 FOR 1 #}
+      - {{ repo }}
+{% endfor %}{# IF 4 FOR 1 #}
+{% if RHOSP_version != 13.0 %}{# IF 4.2 #}
+    rhsm_release: {{ RHOSP_version_supported[RHOSP_version].rhel_release }}
+{% endif %}{# IF 4.2 #}
+{% endif %}{# IF 4 #}
+{% if RHOSP_version == 13.0 %}{# IF 5 #}
+  DockerInsecureRegistryAddress:
+  - undercloud.ctlplane.localdomain:8787
+  - {{ DefaultLeaf0.subnet.cidr | ipaddr('1') | ipaddr('address') }}:8787
+{% endif %}{# IF 5 #}
+
+{% if (roles_count[leaf.name]["ComputeInstanceHA"] > 0) or ((ControllersFencing | bool) and (leaf.name == DefaultLeaf0.name)) %}{# IF 6 #}
+  # Fencing parameters
+  EnableFencing: true
+  FencingConfig:
+    devices:
+{% for vm in vms if ((vm.profile == 'computeinstanceha') or (vm.profile == 'controller')) and (vm.hypervisor in leaf.hypervisor) %}{# IF 6 FOR 1 #}
+    # {{ vm.name }}
+    - agent: fence_ipmilan
+      host_mac: {{ vm.mac }}:{{ (networks | selectattr('name', 'search', 'RHOSPVirtLab_ctlplane') | list | first).mac_suffix }}
+      params:
+        login: admin
+        passwd: admin
+        ipaddr: {% if vm.hypervisor in 'localhost' %}{{ DefaultLeaf0.subnet.gateway }}{% else %}{{ hostvars[vm.hypervisor].ansible_host }}{% endif %}
+
+        ipport: {{ vm.bmcport }}
+        lanplus: true
+{% endfor %}{# IF 6 FOR 1 #}
+{% for node in physical if ((node.profile == 'computeinstanceha') or (node.profile == 'controller')) and (node.leaf == leaf.name) %}{# IF 6 FOR 2 #}
+    # {{ node.name }}
+    - agent: fence_ipmilan
+      host_mac: {{ node.mac }}
+      params:
+        login: {{ node.pm_user }}
+        passwd: {{ node.pm_password }}
+        ipaddr: {{ node.pm_addr }}
+        ipport: {{ node.pm_port }}
+        lanplus: true
+{% endfor %}{# IF 6 FOR 2 #}
+{% endif %}{# IF 6 #}
+
+{% if (not DisableTelemetry) and (Telemetry is mapping) %}{# IF 7 #}
+# Telemetry definitions
+{% if leaf.name == DefaultLeaf0.name %}{# IF 7.1 #}
+  ExtraHostFileEntries:
+    - "{{ Telemetry.MetricsConnectorIPAddress }} {{ Telemetry.MetricsConnectorHost }}"
+{% endif %}{# IF 7.1 #}
+  # enable-stf.yaml contents
+  # only send to STF, not other publishers
+  EventPipelinePublishers: []
+  PipelinePublishers: []
+
+  # manage the polling and pipeline configuration files for Ceilometer agents
+  ManagePolling: true
+  ManagePipeline: true
+
+  # enable Ceilometer metrics and events
+  CeilometerQdrPublishMetrics: true
+  CeilometerQdrPublishEvents: true
+
+  # enable collection of API status
+  CollectdEnableSensubility: true
+  CollectdSensubilityTransport: amqp1
+
+  # enable collection of containerized service metrics
+  CollectdEnableLibpodstats: true
+
+  # set collectd overrides for higher telemetry resolution and extra plugins
+  # to load
+  CollectdConnectionType: amqp1
+  CollectdAmqpInterval: 5
+  CollectdDefaultPollingInterval: 5
+  CollectdExtraPlugins:
+    - vmem
+
+  # set standard prefixes for where metrics and events are published to QDR
+  MetricsQdrAddresses:
+    - prefix: 'collectd'
+      distribution: multicast
+    - prefix: 'anycast/ceilometer'
+      distribution: multicast
+
+  ExtraConfig:
+    ceilometer::agent::polling::polling_interval: 30
+    ceilometer::agent::polling::polling_meters:
+      - cpu
+      - disk.*
+      - ip.*
+      - image.*
+      - memory
+      - memory.*
+      - network.services.vpn.*
+      - network.services.firewall.*
+      - perf.*
+      - port
+      - port.*
+      - switch
+      - switch.*
+      - storage.*
+      - volume.*
+
+    # to avoid filling the memory buffers if disconnected from the message bus
+    # note: this may need an adjustment if there are many metrics to be sent.
+    collectd::plugin::amqp1::send_queue_limit: 5000
+
+    # receive extra information about virtual memory
+    collectd::plugin::vmem::verbose: true
+
+    # provide name and uuid in addition to hostname for better correlation
+    # to ceilometer data
+    collectd::plugin::virt::hostname_format: "name uuid hostname"
+
+    # provide the human-friendly name of the virtual instance
+    collectd::plugin::virt::plugin_instance_format: metadata
+
+    # set memcached collectd plugin to report its metrics by hostname
+    # rather than host IP, ensuring metrics in the dashboard remain uniform
+    collectd::plugin::memcached::instances:
+      local:
+        host: "%{hiera('fqdn_canonical')}"
+        port: 11211
+
+  # stf-connectors.yaml contents
+  MetricsQdrConnectors:
+    - host: {{ Telemetry.MetricsConnectorHost }}
+      port: 443
+      role: edge
+      verifyHostname: false
+      sslProfile: sslProfile
+
+  MetricsQdrSSLProfiles:
+    - name: sslProfile
+{% if RHOSP_version >= 16.2 %}{# IF 7.2 #}
+      caCertFileContent: |
+{% for row in ( Telemetry.Certificate.split('\n') ) %}{# IF 7.2 FOR 1 #}
+        {{ row }}
+{% endfor %}{# IF 7.2 FOR 1 #}
+{% endif %}{# IF 7.2 #}
+
+  CeilometerQdrEventsConfig:
+    driver: amqp
+    topic: {{ Telemetry.Cloud }}-event
+
+  CeilometerQdrMetricsConfig:
+    driver: amqp
+    topic: {{ Telemetry.Cloud }}-metering
+
+  CollectdAmqpInstances:
+    {{ Telemetry.Cloud }}-notify:
+      notify: true
+      format: JSON
+      presettle: false
+    {{ Telemetry.Cloud }}-telemetry:
+      format: JSON
+      presettle: false
+
+  CollectdSensubilityResultsChannel: sensubility/{{ Telemetry.Cloud }}-telemetry
+{% endif %}{# IF 7 #}
+
+{% if DeployDesignate %}{# IF 8 #}
+  UnboundForwardResolvers:
+{% for server in dns_servers %}{# IF 8 FOR 1 #}
+    - {{ server }}
+{% endfor %}{# IF 8 FOR 1 #}
+{% endif %}{# IF 8 #}

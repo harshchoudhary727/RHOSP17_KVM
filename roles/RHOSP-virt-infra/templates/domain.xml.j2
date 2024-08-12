@@ -1,0 +1,108 @@
+<domain type="kvm">
+  <name>{{ item.name }}</name>
+  <title>{{ item.title }}</title>
+  <metadata>
+    <libosinfo:libosinfo xmlns:libosinfo="http://libosinfo.org/xmlns/libvirt/domain/1.0">
+      <libosinfo:os id="http://redhat.com/rhel/{{ RHOSP_version_supported[RHOSP_version].rhel_release }}"/>
+    </libosinfo:libosinfo>
+  </metadata>
+  <memory>{{ item.memory }}</memory>
+  <currentMemory>{{ item.memory }}</currentMemory>
+  <vcpu placement="static">{{ item.vcpus }}</vcpu>
+  <os>
+    <type arch="x86_64" machine="q35">hvm</type>
+{% if item.uefi %}
+    <loader readonly='yes' secure='no' type='pflash'>{{ RHEL_version_supported[ansible_distribution_version].ovmf_path }}OVMF_CODE.secboot.fd</loader>
+    <nvram template='{{ RHEL_version_supported[ansible_distribution_version].ovmf_path }}OVMF_VARS.fd'>{{ pool_location }}/{{ item.name }}_VARS.fd</nvram>
+{% endif %}
+    <bootmenu enable="no"/>
+  </os>
+  <features>
+    <acpi/>
+    <apic/>
+    <vmport state="off"/>
+  </features>
+{% if 'compute' in item.profile %}
+  <cpu mode="host-passthrough" check="partial"/>
+{% else %}
+  <cpu mode="host-model" check="partial"/>
+{% endif %}
+  <clock offset="utc">
+    <timer name="rtc" tickpolicy="catchup"/>
+    <timer name="pit" tickpolicy="delay"/>
+    <timer name="hpet" present="no"/>
+  </clock>
+  <on_poweroff>destroy</on_poweroff>
+  <on_reboot>restart</on_reboot>
+  <on_crash>destroy</on_crash>
+  <pm>
+    <suspend-to-mem enabled="no"/>
+    <suspend-to-disk enabled="no"/>
+  </pm>
+  <devices>
+    <disk type="file" device="disk">
+      <driver name="qemu" type="qcow2"/>
+      <source file="{{ pool_location }}/{{ item.name }}_root.qcow2"/>
+{% if item.backing_store != '' %}
+      <backingStore type="file">
+        <format type="qcow2"/>
+        <source file="{{ pool_location }}/{{ item.backing_store }}"/>
+      </backingStore>
+{% endif %}
+      <target dev="sda" bus="sata"/>
+    </disk>
+{% if item.data_disk_size is defined and item.data_disk_size > 0 %}
+    <disk type="file" device="disk">
+      <driver name="qemu" type="qcow2"/>
+      <source file="{{ pool_location }}/{{ item.name }}_data.qcow2"/>
+      <target dev="sdb" bus="sata"/>
+    </disk>
+{% endif %}
+{% if item.cdrom != '' %}
+    <disk type="file" device="cdrom">
+      <driver name="qemu" type="raw"/>
+      <source file="{{ pool_location }}/{{ item.cdrom }}"/>
+      <target dev="{{ 'sdc' if (item.data_disk_size is defined and item.data_disk_size > 0) else 'sdb' }}" bus="sata"/>
+      <readonly/>
+    </disk>
+    <controller type="usb" model="qemu-xhci" ports="15"/>
+{% endif %}
+{% for network in networks | sort(attribute='mac_suffix') if network.name in item.nics %}
+{% if network.forward == 'bridge' %}
+    <interface type="bridge">
+      <mac address="{{ item.mac }}:{{ network.mac_suffix }}"/>
+      <source bridge="{{ network.bridge }}"/>
+      <model type="e1000e"/>
+    </interface>
+{% else %}
+    <interface type="network">
+      <mac address="{{ item.mac }}:{{ network.mac_suffix }}"/>
+      <source network="{{ network.name }}"/>
+      <model type="e1000e"/>
+    </interface>
+{% endif %}
+{% endfor %}
+    <console type="pty"/>
+    <channel type="unix">
+      <source mode="bind"/>
+      <target type="virtio" name="org.qemu.guest_agent.0"/>
+    </channel>
+    <channel type="spicevmc">
+      <target type="virtio" name="com.redhat.spice.0"/>
+    </channel>
+    <input type="tablet" bus="usb"/>
+    <graphics type="spice" port="-1" tlsPort="-1" autoport="yes">
+      <image compression="off"/>
+    </graphics>
+    <sound model="ich9"/>
+    <video>
+      <model type="qxl"/>
+    </video>
+    <redirdev bus="usb" type="spicevmc"/>
+    <redirdev bus="usb" type="spicevmc"/>
+    <memballoon model="virtio"/>
+    <rng model="virtio">
+      <backend model="random">/dev/urandom</backend>
+    </rng>
+  </devices>
+</domain>

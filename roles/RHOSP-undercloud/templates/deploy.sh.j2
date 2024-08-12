@@ -1,0 +1,95 @@
+#/bin/bash
+
+{% set ceph_count = (roles_count[leaf.name]["CephStorage"] + roles_count[leaf.name]["CephAll"]) %}
+{% set hci_count = (roles_count[leaf.name]["ComputeHCI"] + roles_count[leaf.name]["DistributedComputeHCI"] + roles_count[leaf.name]["DistributedComputeHCIScaleOut"]) %}
+
+{% if leaf.name == DefaultLeaf0.name %}
+{% set templates_dir='/home/stack/templates' %}
+{% else %}
+{% set templates_dir="/home/stack/templates/" ~ leaf.name %}
+{% endif %}
+
+source /home/stack/stackrc
+{% if RHOSP_version >= 17.0 and ceph_count + hci_count > 0 %}
+openstack overcloud ceph deploy -y \
+{{ templates_dir }}/overcloud-baremetal-deployed.yaml \
+-o {{ templates_dir }}/deployed-ceph.yaml \
+{% if hci_count > 0 %}
+--config {{ templates_dir }}/initial-ceph.conf \
+{% endif %}
+--roles-data {{ templates_dir }}/roles_data.yaml \
+--container-image-prepare /home/stack/containers-prepare-parameter.yaml
+{% endif %}
+
+{% if (DCNLeafs | length > 0) and (leaf.name == DefaultLeaf0.name) and (ceph_count + hci_count > 0) %}
+sudo rm /home/stack/templates/dcn_ceph_external.yaml
+sudo -E openstack overcloud export ceph \
+--stack {% for dcn_leaf in DCNLeafs if (roles_count[dcn_leaf.name]["CephStorage"] + roles_count[dcn_leaf.name]["CephAll"] + roles_count[dcn_leaf.name]["ComputeHCI"] + roles_count[dcn_leaf.name]["DistributedComputeHCI"] + roles_count[dcn_leaf.name]["DistributedComputeHCIScaleOut"]) > 0 %}{{ dcn_leaf.name }}{{ "," if not loop.last else "" }}{% endfor %} \
+--config-download-dir /var/lib/mistral \
+--output-file /home/stack/templates/dcn_ceph_external.yaml
+[[ -f /home/stack/templates/dcn_ceph_external.yaml ]] || sudo touch /home/stack/templates/dcn_ceph_external.yaml
+{% endif %}
+
+{% if RHOSP_version == 13.0 and leaf.name != DefaultLeaf0.name %}
+# No deployment command for RHOSP 13.0 leafs
+{% else %}
+date
+time openstack overcloud deploy \
+--log-file {{ leaf.name }}_deployment.log \
+--templates /usr/share/openstack-tripleo-heat-templates/ \
+--stack {{ leaf.name }} \
+-n /home/stack/templates/network_data.yaml \
+-r {{ templates_dir }}/roles_data.yaml \
+{% for environment in deployment_environment %}
+{% if ((environment.DCN | bool) and (DCNLeafs | length > 0)) or not (environment.DCN | bool) %}
+{% if ((environment.Leafs == 'Default') and (leaf.name == DefaultLeaf0.name)) or ((environment.Leafs == 'NotDefault') and (leaf.name != DefaultLeaf0.name)) or (environment.Leafs == 'All') %}
+{% if RHOSP_version in environment.version %}
+{% if ((environment.Roles is defined) and ((roles_count[leaf.name].items() | selectattr(0, "in", environment.Roles) | sum(1)) > 0)) or (environment.Roles is not defined) %}
+{% if ((environment.Variable is defined) and (lookup('vars', environment.Variable) | bool)) or ((environment.Variable is defined) and (lookup('vars', environment.Variable) is mapping)) or (environment.Variable is not defined) %}
+{% if environment.absolute_path | bool %}
+-e {{ environment.file }} \
+{% else %}
+-e {{ templates_dir }}/{{ environment.file }} \
+{% endif %}
+{%- endif %}
+{%- endif %}
+{%- endif %}
+{%- endif %}
+{%- endif %}
+{%- endfor %}
+;
+date
+{% endif %}
+
+{% if (leaf.name != DefaultLeaf0.name) and (RHOSP_version != 13.0) %}
+ANSIBLE_HOST_KEY_CHECKING=false TRIPLEO_PLAN_NAME=overcloud \
+{% if (RHOSP_version < 17.0) %}
+ansible -i /usr/bin/tripleo-ansible-inventory \
+{% else %}
+ansible -i ~/overcloud-deploy/overcloud/config-download/overcloud/tripleo-ansible-inventory.yaml \
+{%- endif %}
+{% raw %}
+nova_api[0] -b -a \
+"{{ container_cli }} exec -it nova_api \
+nova-manage cell_v2 discover_hosts --by-service --verbose"
+{% endraw %}
+{% endif %}
+
+{% if RHOSP_version >= 17.0 and (ceph_count + hci_count) > 0 %}
+sed -i 's/ApplyCephConfigOverridesOnUpdate: true/ApplyCephConfigOverridesOnUpdate: false/' {{ templates_dir }}/deployed-ceph.yaml
+{% endif %}
+
+{% if (DCNLeafs | length > 0) and (leaf.name == DefaultLeaf0.name) and (RHOSP_version > 13.0) and (RHOSP_version < 17.0) %}
+rm /home/stack/templates/overcloud-export.yaml
+sudo chmod -R +rx /var/lib/mistral/overcloud/
+openstack overcloud export \
+--config-download-dir /var/lib/mistral/{{ leaf.name }} \
+--stack {{ leaf.name }} --output-file /home/stack/templates/overcloud-export.yaml
+{% if (ceph_count + hci_count) > 0 %}
+sudo rm /home/stack/templates/overcloud_ceph_external.yaml
+sudo -E openstack overcloud export ceph \
+--stack {{ leaf.name }} \
+--config-download-dir /var/lib/mistral \
+--output-file /home/stack/templates/overcloud_ceph_external.yaml
+{% endif %}
+{% endif %}

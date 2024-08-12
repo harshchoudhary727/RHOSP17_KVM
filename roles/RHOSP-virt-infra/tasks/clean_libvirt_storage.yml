@@ -1,0 +1,38 @@
+- name: STORAGE - Gather facts about libvirt storage pools
+  community.libvirt.virt_pool:
+    command: facts
+
+- name: STORAGE - Deactivate the pool
+  community.libvirt.virt_pool:
+    state: inactive
+    name: "{{ item }}"
+  loop:
+    - RHOSPVirtLab_storage
+
+- name: STORAGE - Delete the pool
+  community.libvirt.virt_pool:
+    command: undefine
+    name: "{{ item }}"
+  when: ansible_libvirt_pools[item] is defined
+  loop:
+    - RHOSPVirtLab_storage
+
+- name: STORAGE - Gather facts about libvirt storage pools
+  community.libvirt.virt_pool:
+    command: facts
+
+- name: STORAGE - Delete the root disk file
+  file:
+    path: "{{ pool_location }}/{{ item.name }}_root.qcow2"
+    state: absent
+  loop: "{{ vms }}"
+  when: inventory_hostname in item.hypervisor
+
+- name: STORAGE - Delete the data disk file
+  file:
+    path: "{{ pool_location }}/{{ item.name }}_data.qcow2"
+    state: absent
+  loop: "{{ vms }}"
+  when:
+    - inventory_hostname in item.hypervisor
+    - item.data_disk_size is defined and item.data_disk_size > 0
